@@ -1,48 +1,110 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+<Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{E6C238B8-2EF4-4104-8737-650166E0278B}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>REPO_Instant_Save</RootNamespace>
+    <TargetFramework>netstandard2.1</TargetFramework>
     <AssemblyName>REPO-Instant-Save</AssemblyName>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
+    <RootNamespace>REPO_Instant_Save</RootNamespace>
+    <Product>REPO-Instant-Save</Product>
+    <Version>0.1.0</Version>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <Deterministic>true</Deterministic>
+    <!-- Suppress noisy nullable/obsolete warnings from un-annotated game assemblies -->
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
+
+  <!-- Machine-specific paths. Edit these two if the game install or the active
+       Thunderstore Mod Manager profile ever moves. Everything else derives from them. -->
+  <PropertyGroup>
+    <RepoGameDir>D:\Steam\steamapps\common\REPO</RepoGameDir>
+    <RepoManaged>$(RepoGameDir)\REPO_Data\Managed</RepoManaged>
+    <TsProfile>$(AppData)\Thunderstore Mod Manager\DataFolder\REPO\profiles\newPack</TsProfile>
+    <BepInExCore>$(TsProfile)\BepInEx\core</BepInExCore>
+    <BepInExPlugins>$(TsProfile)\BepInEx\plugins</BepInExPlugins>
+    <DeployDir>$(BepInExPlugins)\Ashx87-REPO-Instant-Save</DeployDir>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
+
   <ItemGroup>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Xml.Linq" />
-    <Reference Include="System.Data.DataSetExtensions" />
-    <Reference Include="Microsoft.CSharp" />
-    <Reference Include="System.Data" />
-    <Reference Include="System.Net.Http" />
-    <Reference Include="System.Xml" />
+    <PackageReference Include="Krafs.Publicizer" Version="2.2.1" PrivateAssets="all" />
   </ItemGroup>
+
+  <!-- Publicize game assemblies so we can read/write private game state without reflection. -->
   <ItemGroup>
-    <Compile Include="Class1.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Publicize Include="Assembly-CSharp" />
+    <Publicize Include="Assembly-CSharp-firstpass" />
   </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
+  <ItemGroup>
+    <!-- BepInEx / Harmony (provided at runtime; do not copy to output) -->
+    <Reference Include="BepInEx">
+      <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExCore)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Game code -->
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(RepoManaged)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(RepoManaged)\Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Unity -->
+    <Reference Include="UnityEngine">
+      <HintPath>$(RepoManaged)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(RepoManaged)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(RepoManaged)\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(RepoManaged)\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(RepoManaged)\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Photon (multiplayer / RPC) -->
+    <Reference Include="PhotonUnityNetworking">
+      <HintPath>$(RepoManaged)\PhotonUnityNetworking.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PhotonRealtime">
+      <HintPath>$(RepoManaged)\PhotonRealtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Photon3Unity3D">
+      <HintPath>$(RepoManaged)\Photon3Unity3D.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Bundled with the game; used for snapshot (de)serialization. Not shipped. -->
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(RepoManaged)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Copy the built plugin into the active mod-manager profile after every build. -->
+  <Target Name="DeployToPlugins" AfterTargets="Build">
+    <MakeDir Directories="$(DeployDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(DeployDir)" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).pdb" DestinationFolder="$(DeployDir)" SkipUnchangedFiles="false" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
+    <Message Importance="high" Text="[REPO-Instant-Save] Deployed $(AssemblyName).dll -> $(DeployDir)" />
+  </Target>
+
 </Project>
