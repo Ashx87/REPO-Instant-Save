@@ -21,6 +21,7 @@ namespace REPO_Instant_Save.Save
         public List<PlayerDto> players { get; set; } = new();
         public RoundDto round { get; set; } = new();
         public List<HingeDto> hinges { get; set; } = new();
+        public GridDto grid { get; set; } = new();
     }
 
     public sealed class SceneObjectDto
@@ -30,6 +31,33 @@ namespace REPO_Instant_Save.Save
         public string kind { get; set; } = "other";
         public Vec3Dto pos { get; set; } = new();
         public Vec3Dto euler { get; set; } = new();
+        // Grid cell + module type — only meaningful for kind == "module" (cross-session rebuild).
+        public int gridX { get; set; } = -1;
+        public int gridY { get; set; } = -1;
+        public int moduleType { get; set; } = -1;
+    }
+
+    /// <summary>The generated level grid (cross-session map rebuild).</summary>
+    public sealed class GridDto
+    {
+        public bool present { get; set; }
+        public int width { get; set; }
+        public int height { get; set; }
+        public List<TileDto> tiles { get; set; } = new();
+    }
+
+    public sealed class TileDto
+    {
+        public int x { get; set; }
+        public int y { get; set; }
+        public bool active { get; set; }
+        public bool first { get; set; }
+        public int connections { get; set; }
+        public bool cTop { get; set; }
+        public bool cRight { get; set; }
+        public bool cBot { get; set; }
+        public bool cLeft { get; set; }
+        public int type { get; set; }
     }
 
     public sealed class ValuableDto

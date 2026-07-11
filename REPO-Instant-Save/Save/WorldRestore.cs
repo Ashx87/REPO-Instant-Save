@@ -42,6 +42,47 @@ namespace REPO_Instant_Save.Save
             Plugin.Log.LogInfo("Restore: complete.");
         }
 
+        /// <summary>
+        /// Cross-session entry: the map was just rebuilt, but the generator also spawned random
+        /// valuables. Clear those first, then run the normal restore (which re-creates the saved
+        /// valuables, teleports players, etc.).
+        /// </summary>
+        public static IEnumerator CrossSessionRestore(WorldSnapshot snap)
+        {
+            ClearSpawnedValuables();
+            yield return null;
+            yield return RestoreRoutine(snap);
+        }
+
+        /// <summary>Destroy every valuable the generator spawned so restore can re-create the saved set.</summary>
+        private static void ClearSpawnedValuables()
+        {
+            int n = 0;
+            foreach (var v in UnityEngine.Object.FindObjectsOfType<ValuableObject>())
+            {
+                if (v == null)
+                {
+                    continue;
+                }
+
+                if (SemiFunc.IsMultiplayer())
+                {
+                    if (PhotonNetwork.IsMasterClient)
+                    {
+                        PhotonNetwork.Destroy(v.gameObject);
+                        n++;
+                    }
+                }
+                else
+                {
+                    UnityEngine.Object.Destroy(v.gameObject);
+                    n++;
+                }
+            }
+
+            Plugin.Log.LogInfo($"Cross-session: cleared {n} generator-spawned valuable(s).");
+        }
+
         // ---- Players ----------------------------------------------------------------
 
         public static void RestorePlayers(WorldSnapshot snap)
@@ -239,10 +280,19 @@ namespace REPO_Instant_Save.Save
                     best.UpdateLock(false);
                     best.haulGoal = dto.haulGoal;
 
-                    // Always reset to Idle (waiting for the player to activate). Restoring a
-                    // saved Active state would let the point auto-complete when haul >= goal,
-                    // bypassing manual-confirm mods and spawning the extraction barrier.
-                    DriveExtractionState(best, ExtractionPoint.State.Idle);
+                    if (dto.state == (int)ExtractionPoint.State.Complete)
+                    {
+                        // This point was already extracted at save time — keep it completed so it
+                        // matches the restored RoundDirector count (and can't be re-extracted).
+                        MarkExtractionComplete(best);
+                    }
+                    else
+                    {
+                        // Not-yet-completed points reset to Idle (waiting for the player to
+                        // activate). Restoring a saved Active/Extracting state would let the point
+                        // auto-complete when haul >= goal, bypassing manual-confirm mods.
+                        DriveExtractionState(best, ExtractionPoint.State.Idle);
+                    }
 
                     used.Add(best);
                     n++;
@@ -259,6 +309,25 @@ namespace REPO_Instant_Save.Save
             }
 
             Plugin.Log.LogInfo($"Restore: reset {n} extraction point(s) + round accounting.");
+        }
+
+        /// <summary>
+        /// Drive an extraction point into its resting Complete state without re-running the
+        /// currency award or completed-count increment — those are restored from RoundDto, so
+        /// re-running them here would double-count. Setting <c>taxReturn</c> first makes Complete's
+        /// stateStart skip that accounting; the platform-hide is gated behind it too, so we hide
+        /// the platform ourselves. (Host-authoritative: in multiplayer the state RPC reaches
+        /// clients, whose run stats are corrected by the host's normal sync.)
+        /// </summary>
+        private static void MarkExtractionComplete(ExtractionPoint ep)
+        {
+            ep.taxReturn = true;
+            DriveExtractionState(ep, ExtractionPoint.State.Complete);
+
+            if (ep.platform != null)
+            {
+                ep.platform.gameObject.SetActive(false);
+            }
         }
 
         private static void DriveExtractionState(ExtractionPoint ep, ExtractionPoint.State state)
@@ -342,7 +411,7 @@ namespace REPO_Instant_Save.Save
         {
             var live = UnityEngine.Object.FindObjectsOfType<PhysGrabObject>().ToList();
             var used = new HashSet<PhysGrabObject>();
-            Dictionary<string, PrefabRef> valuablePrefabs = BuildValuablePrefabMap();
+            Dictionary<string, ValuableSource> valuablePrefabs = BuildValuablePrefabMap();
 
             int moved = 0, revalued = 0, recreated = 0;
 
@@ -431,9 +500,9 @@ namespace REPO_Instant_Save.Save
             }
         }
 
-        private static PhysGrabObject? RecreateValuable(ValuableDto dto, Dictionary<string, PrefabRef> map)
+        private static PhysGrabObject? RecreateValuable(ValuableDto dto, Dictionary<string, ValuableSource> map)
         {
-            if (!map.TryGetValue(dto.name, out PrefabRef prefabRef) || prefabRef == null)
+            if (!map.TryGetValue(dto.name, out ValuableSource src) || src.Prefab == null)
             {
                 Plugin.Log.LogWarning($"Restore: cannot re-create '{dto.name}' — prefab not found in level presets.");
                 return null;
@@ -443,8 +512,8 @@ namespace REPO_Instant_Save.Save
             Quaternion rot = Quaternion.Euler(dto.euler.ToVector3());
 
             GameObject go = SemiFunc.IsMultiplayer()
-                ? PhotonNetwork.InstantiateRoomObject(prefabRef.ResourcePath, pos, rot, 0)
-                : UnityEngine.Object.Instantiate(prefabRef.Prefab, pos, rot);
+                ? PhotonNetwork.InstantiateRoomObject(src.ResourcePath, pos, rot, 0)
+                : UnityEngine.Object.Instantiate(src.Prefab, pos, rot);
 
             if (go == null)
             {
@@ -461,35 +530,45 @@ namespace REPO_Instant_Save.Save
             return go.GetComponent<PhysGrabObject>();
         }
 
-        private static Dictionary<string, PrefabRef> BuildValuablePrefabMap()
+        private static Dictionary<string, ValuableSource> BuildValuablePrefabMap()
         {
-            var map = new Dictionary<string, PrefabRef>();
+            var map = new Dictionary<string, ValuableSource>();
+
             var level = LevelGenerator.Instance != null ? LevelGenerator.Instance.Level : null;
-            if (level == null || level.ValuablePresets == null)
+            if (level != null && level.ValuablePresets != null)
             {
-                return map;
+                foreach (var preset in level.ValuablePresets)
+                {
+                    if (preset == null)
+                    {
+                        continue;
+                    }
+
+                    AddAll(map, preset.tiny);
+                    AddAll(map, preset.small);
+                    AddAll(map, preset.medium);
+                    AddAll(map, preset.big);
+                    AddAll(map, preset.wide);
+                    AddAll(map, preset.tall);
+                    AddAll(map, preset.veryTall);
+                }
             }
 
-            foreach (var preset in level.ValuablePresets)
+            // Surplus "money bag" valuables are spawned by extraction points on tax-return, not by
+            // the level generator, so they never appear in ValuablePresets. Register them from the
+            // AssetManager so a bag left on the cart survives a cross-session restore.
+            var am = AssetManager.instance;
+            if (am != null)
             {
-                if (preset == null)
-                {
-                    continue;
-                }
-
-                AddAll(map, preset.tiny);
-                AddAll(map, preset.small);
-                AddAll(map, preset.medium);
-                AddAll(map, preset.big);
-                AddAll(map, preset.wide);
-                AddAll(map, preset.tall);
-                AddAll(map, preset.veryTall);
+                AddSurplus(map, am.surplusValuableSmall);
+                AddSurplus(map, am.surplusValuableMedium);
+                AddSurplus(map, am.surplusValuableBig);
             }
 
             return map;
         }
 
-        private static void AddAll(Dictionary<string, PrefabRef> map, List<PrefabRef> list)
+        private static void AddAll(Dictionary<string, ValuableSource> map, List<PrefabRef> list)
         {
             if (list == null)
             {
@@ -506,8 +585,36 @@ namespace REPO_Instant_Save.Save
                 string key = Clean(pr.Prefab.name);
                 if (!map.ContainsKey(key))
                 {
-                    map[key] = pr;
+                    map[key] = new ValuableSource(pr.Prefab, pr.ResourcePath);
                 }
+            }
+        }
+
+        private static void AddSurplus(Dictionary<string, ValuableSource> map, GameObject? prefab)
+        {
+            if (prefab == null)
+            {
+                return;
+            }
+
+            string key = Clean(prefab.name);
+            if (!map.ContainsKey(key))
+            {
+                // The game network-instantiates these from "Valuables/<name>" (ExtractionPoint.SpawnTaxReturn).
+                map[key] = new ValuableSource(prefab, "Valuables/" + prefab.name);
+            }
+        }
+
+        /// <summary>A spawnable valuable prefab plus the Resources path used to network-instantiate it.</summary>
+        private readonly struct ValuableSource
+        {
+            public readonly GameObject Prefab;
+            public readonly string ResourcePath;
+
+            public ValuableSource(GameObject prefab, string resourcePath)
+            {
+                Prefab = prefab;
+                ResourcePath = resourcePath;
             }
         }
 

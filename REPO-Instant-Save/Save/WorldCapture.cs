@@ -20,6 +20,7 @@ namespace REPO_Instant_Save.Save
             };
 
             CaptureLevelObjects(snap);
+            CaptureGrid(snap);
             CaptureGrabbables(snap);
             CaptureExtraction(snap);
             CaptureRound(snap);
@@ -38,7 +39,8 @@ namespace REPO_Instant_Save.Save
 
             foreach (Transform child in lg.LevelParent.transform)
             {
-                string kind = child.GetComponent<Module>() != null ? "module"
+                var module = child.GetComponent<Module>();
+                string kind = module != null ? "module"
                     : child.GetComponent<ModuleConnectObject>() != null ? "connect"
                     : "other";
 
@@ -48,7 +50,67 @@ namespace REPO_Instant_Save.Save
                     kind = kind,
                     pos = new Vec3Dto(child.position),
                     euler = new Vec3Dto(child.eulerAngles),
+                    gridX = module != null ? module.GridX : -1,
+                    gridY = module != null ? module.GridY : -1,
+                    moduleType = ModuleTileType(lg, module),
                 });
+            }
+        }
+
+        private static int ModuleTileType(LevelGenerator lg, Module? module)
+        {
+            if (module == null || lg.LevelGrid == null)
+            {
+                return -1;
+            }
+
+            int x = module.GridX;
+            int y = module.GridY;
+            if (x < 0 || y < 0 || x >= lg.LevelWidth || y >= lg.LevelHeight)
+            {
+                return -1;
+            }
+
+            var t = lg.LevelGrid[x, y];
+            return t != null ? (int)t.type : -1;
+        }
+
+        private static void CaptureGrid(WorldSnapshot snap)
+        {
+            var lg = LevelGenerator.Instance;
+            if (lg == null || lg.LevelGrid == null)
+            {
+                return;
+            }
+
+            snap.grid.present = true;
+            snap.grid.width = lg.LevelWidth;
+            snap.grid.height = lg.LevelHeight;
+
+            for (int x = 0; x < lg.LevelWidth; x++)
+            {
+                for (int y = 0; y < lg.LevelHeight; y++)
+                {
+                    var t = lg.LevelGrid[x, y];
+                    if (t == null || !t.active)
+                    {
+                        continue;
+                    }
+
+                    snap.grid.tiles.Add(new TileDto
+                    {
+                        x = x,
+                        y = y,
+                        active = t.active,
+                        first = t.first,
+                        connections = t.connections,
+                        cTop = t.connectedTop,
+                        cRight = t.connectedRight,
+                        cBot = t.connectedBot,
+                        cLeft = t.connectedLeft,
+                        type = (int)t.type,
+                    });
+                }
             }
         }
 
