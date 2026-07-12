@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace REPO_Instant_Save.Save
@@ -23,6 +24,7 @@ namespace REPO_Instant_Save.Save
             CaptureLevelObjects(snap);
             CaptureGrid(snap);
             CaptureGrabbables(snap);
+            CaptureHaulers(snap);
             CaptureExtraction(snap);
             CaptureRound(snap);
             CaptureHinges(snap);
@@ -117,6 +119,11 @@ namespace REPO_Instant_Save.Save
 
         private static void CaptureGrabbables(WorldSnapshot snap)
         {
+            // Which loose objects currently sit inside a cart (using the game's own overlap test),
+            // so restore can re-seat them relative to the cart. A cart's $ display is a live
+            // overlap-sum of its contents, so they must end up resting back inside it.
+            var containedBy = BuildCartContainment();
+
             // All loose, grabbable world objects: valuables, items (guns/tools) and carts.
             // Structural grabbables (hinges, doors) are skipped — they return with the modules.
             foreach (var pgo in UnityEngine.Object.FindObjectsOfType<PhysGrabObject>())
@@ -137,15 +144,92 @@ namespace REPO_Instant_Save.Save
                     continue;
                 }
 
-                snap.valuables.Add(new ValuableDto
+                var dto = new ValuableDto
                 {
                     name = Clean(pgo.name),
                     kind = kind,
                     pos = new Vec3Dto(pgo.transform.position),
                     euler = new Vec3Dto(pgo.transform.eulerAngles),
                     value = valuable != null ? valuable.dollarValueCurrent : 0f,
+                };
+
+                // Carts are never "inside a cart"; only their contents get a cart-relative pose.
+                if (kind != "cart" && containedBy.TryGetValue(pgo, out var cart) && cart != null)
+                {
+                    Transform ct = cart.transform;
+                    dto.inCart = Clean(cart.name);
+                    dto.inCartPos = new Vec3Dto(ct.InverseTransformPoint(pgo.transform.position));
+                    dto.inCartEuler = new Vec3Dto((Quaternion.Inverse(ct.rotation) * pgo.transform.rotation).eulerAngles);
+                }
+
+                snap.valuables.Add(dto);
+            }
+        }
+
+        /// <summary>
+        /// Capture every "Hauler" (<see cref="ItemValuableBox"/>): it absorbs valuables into an
+        /// internal stored $ total and destroys the absorbed objects, so that value survives
+        /// nowhere else. Done as its own pass because the Hauler is not a PhysGrabObject, so the
+        /// grabbable sweep never sees it. Matched back on restore by name + nearest position.
+        /// </summary>
+        private static void CaptureHaulers(WorldSnapshot snap)
+        {
+            foreach (var box in UnityEngine.Object.FindObjectsOfType<ItemValuableBox>())
+            {
+                if (box == null)
+                {
+                    continue;
+                }
+
+                snap.haulers.Add(new HaulerDto
+                {
+                    name = Clean(box.name),
+                    pos = new Vec3Dto(box.transform.position),
+                    value = box.CurrentValue,
                 });
             }
+
+            Plugin.Log.LogInfo($"Instant Save: captured {snap.haulers.Count} Hauler(s).");
+        }
+
+        /// <summary>
+        /// Map each PhysGrabObject that is physically inside a cart to that cart's PhysGrabObject,
+        /// replicating <c>PhysGrabCart.ObjectsInCart</c>'s "In Cart" overlap test exactly.
+        /// </summary>
+        private static Dictionary<PhysGrabObject, PhysGrabObject> BuildCartContainment()
+        {
+            var map = new Dictionary<PhysGrabObject, PhysGrabObject>();
+
+            foreach (var cart in UnityEngine.Object.FindObjectsOfType<PhysGrabCart>())
+            {
+                if (cart == null || cart.inCart == null)
+                {
+                    continue;
+                }
+
+                var cartPgo = cart.GetComponent<PhysGrabObject>();
+                if (cartPgo == null)
+                {
+                    continue;
+                }
+
+                Transform box = cart.inCart;
+                foreach (var col in Physics.OverlapBox(box.position, box.localScale / 2f, box.rotation))
+                {
+                    if (col == null)
+                    {
+                        continue;
+                    }
+
+                    var pgo = col.GetComponentInParent<PhysGrabObject>();
+                    if (pgo != null && pgo != cartPgo && !map.ContainsKey(pgo))
+                    {
+                        map[pgo] = cartPgo;
+                    }
+                }
+            }
+
+            return map;
         }
 
         private static void CaptureExtraction(WorldSnapshot snap)

@@ -26,6 +26,7 @@ namespace REPO_Instant_Save.Save
         /// <summary>Every child under LevelGenerator.LevelParent (modules, connect/block objects).</summary>
         public List<SceneObjectDto> level { get; set; } = new();
         public List<ValuableDto> valuables { get; set; } = new();
+        public List<HaulerDto> haulers { get; set; } = new();
         public List<ExtractionDto> extraction { get; set; } = new();
         public List<PlayerDto> players { get; set; } = new();
         public RoundDto round { get; set; } = new();
@@ -76,6 +77,30 @@ namespace REPO_Instant_Save.Save
         public string kind { get; set; } = "valuable";
         public Vec3Dto pos { get; set; } = new();
         public Vec3Dto euler { get; set; } = new();
+        public float value { get; set; }
+
+        /// <summary>
+        /// If this object was sitting inside a cart at capture time, the cart's (cleaned) name;
+        /// otherwise null. A cart's $ display is a live overlap-sum of the valuables physically
+        /// inside it, so restore must re-seat contents inside the cart. Nullable so old snapshots
+        /// (which lack these fields) deserialize to null and skip the re-seat.
+        /// </summary>
+        public string? inCart { get; set; }
+
+        /// <summary>Pose relative to the cart root transform, used to re-seat after the cart is placed.</summary>
+        public Vec3Dto? inCartPos { get; set; }
+        public Vec3Dto? inCartEuler { get; set; }
+    }
+
+    /// <summary>
+    /// A "Hauler" (ItemValuableBox): absorbs valuables into a stored $ total, destroying the
+    /// absorbed objects. Only this total survives, so it is captured/restored on its own. Matched
+    /// on restore by name + nearest position.
+    /// </summary>
+    public sealed class HaulerDto
+    {
+        public string name { get; set; } = "";
+        public Vec3Dto pos { get; set; } = new();
         public float value { get; set; }
     }
 

@@ -26,6 +26,7 @@ namespace REPO_Instant_Save.Save
         public static IEnumerator RestoreRoutine(WorldSnapshot snap)
         {
             RestoreGrabbables(snap);
+            RestoreHaulers(snap);
             RefreshEnemies();
             RestoreExtraction(snap);
             RestoreHinges(snap);
@@ -36,6 +37,7 @@ namespace REPO_Instant_Save.Save
             {
                 HoldLocalPlayer(snap);
                 HoldHinges();
+                HoldCartItems();
                 yield return new WaitForFixedUpdate();
             }
 
@@ -242,12 +244,7 @@ namespace REPO_Instant_Save.Save
                 r.extractionPointSurplus = snap.round.extractionPointSurplus;
                 r.extractionPointsCompleted = snap.round.extractionPointsCompleted;
                 r.extractionHaulGoal = snap.round.extractionHaulGoal;
-                r.extractionPointActive = snap.round.extractionPointActive;
                 r.allExtractionPointsCompleted = snap.round.allExtractionPointsCompleted;
-                if (!snap.round.extractionPointActive)
-                {
-                    r.extractionPointCurrent = null;
-                }
             }
 
             var live = UnityEngine.Object.FindObjectsOfType<ExtractionPoint>().ToList();
@@ -306,6 +303,16 @@ namespace REPO_Instant_Save.Save
                 {
                     ep.UpdateLock(false);
                 }
+            }
+
+            // Every point above was driven to Idle or Complete — never left Active/Extracting. So
+            // RoundDirector must reflect "no extraction currently running". Otherwise the
+            // !extractionPointActive gate (RoundDirector.ExtractionPointActivate/RequestActivation)
+            // refuses to activate ANY point, and a save taken mid-extraction deadlocks the round.
+            if (r != null)
+            {
+                r.extractionPointActive = false;
+                r.extractionPointCurrent = null;
             }
 
             Plugin.Log.LogInfo($"Restore: reset {n} extraction point(s) + round accounting.");
@@ -413,12 +420,19 @@ namespace REPO_Instant_Save.Save
             var used = new HashSet<PhysGrabObject>();
             Dictionary<string, ValuableSource> valuablePrefabs = BuildValuablePrefabMap();
 
+            // Carts we've placed, plus the contents we must re-seat inside them afterwards (a
+            // cart's $ display is a live overlap-sum of the valuables physically inside it).
+            var restoredCarts = new List<PhysGrabObject>();
+            var cartContents = new List<(PhysGrabObject inst, ValuableDto dto)>();
+
             int moved = 0, revalued = 0, recreated = 0;
 
             foreach (var dto in snap.valuables)
             {
                 Vector3 target = dto.pos.ToVector3();
                 Quaternion rot = Quaternion.Euler(dto.euler.ToVector3());
+
+                PhysGrabObject? instance = null;
 
                 PhysGrabObject? best = FindNearestUnused(live, used, dto.name, target);
                 if (best != null)
@@ -438,6 +452,7 @@ namespace REPO_Instant_Save.Save
                     }
 
                     used.Add(best);
+                    instance = best;
                     moved++;
                 }
                 else if (dto.kind == "valuable")
@@ -448,13 +463,124 @@ namespace REPO_Instant_Save.Save
                     {
                         ZeroVelocity(recreatedObj.GetComponent<Rigidbody>());
                         GraceImpact(recreatedObj);
+                        instance = recreatedObj;
                         recreated++;
+                    }
+                }
+
+                if (instance != null)
+                {
+                    if (dto.kind == "cart")
+                    {
+                        restoredCarts.Add(instance);
+                    }
+                    else if (dto.inCart != null && dto.inCartPos != null)
+                    {
+                        cartContents.Add((instance, dto));
                     }
                 }
             }
 
+            SeatCartContents(restoredCarts, cartContents);
+
             Plugin.Log.LogInfo(
                 $"Restore: moved {moved}, revalued {revalued}, recreated {recreated} / {snap.valuables.Count} object(s).");
+        }
+
+        // ---- Cart contents ----------------------------------------------------------
+
+        // Valuables/items that must be re-asserted inside their cart during the settle window,
+        // stored with the cart-local pose so they track the cart even if it drifts.
+        private static readonly List<(PhysGrabObject inst, PhysGrabObject cart, Vector3 localPos, Quaternion localRot)> HeldCartItems = new();
+
+        /// <summary>
+        /// Re-seat restored cart contents inside their (re-placed) cart at the saved cart-local
+        /// pose, then pin them through the settle window so physics can't eject them from the
+        /// cart's tight collider volume. The cart's own overlap check then re-reads the value.
+        /// </summary>
+        private static void SeatCartContents(
+            List<PhysGrabObject> carts, List<(PhysGrabObject inst, ValuableDto dto)> contents)
+        {
+            HeldCartItems.Clear();
+            if (carts.Count == 0 || contents.Count == 0)
+            {
+                return;
+            }
+
+            int seated = 0;
+            foreach (var (inst, dto) in contents)
+            {
+                if (inst == null)
+                {
+                    continue;
+                }
+
+                PhysGrabObject? cart = FindCartFor(carts, dto);
+                if (cart == null)
+                {
+                    continue;
+                }
+
+                Vector3 localPos = dto.inCartPos!.ToVector3();
+                Quaternion localRot = Quaternion.Euler(dto.inCartEuler != null ? dto.inCartEuler.ToVector3() : Vector3.zero);
+
+                inst.Teleport(cart.transform.TransformPoint(localPos), cart.transform.rotation * localRot);
+                ZeroVelocity(inst.GetComponent<Rigidbody>());
+                GraceImpact(inst);
+                HeldCartItems.Add((inst, cart, localPos, localRot));
+                seated++;
+            }
+
+            Plugin.Log.LogInfo($"Restore: re-seated {seated} object(s) inside {carts.Count} cart(s).");
+        }
+
+        private static PhysGrabObject? FindCartFor(List<PhysGrabObject> carts, ValuableDto dto)
+        {
+            PhysGrabObject? best = null;
+            float bestDist = float.MaxValue;
+            Vector3 savedPos = dto.pos.ToVector3();
+
+            foreach (var cart in carts)
+            {
+                if (cart == null || Clean(cart.name) != dto.inCart)
+                {
+                    continue;
+                }
+
+                float d = (cart.transform.position - savedPos).sqrMagnitude;
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = cart;
+                }
+            }
+
+            return best;
+        }
+
+        private static void HoldCartItems()
+        {
+            foreach (var (inst, cart, localPos, localRot) in HeldCartItems)
+            {
+                if (inst == null || cart == null)
+                {
+                    continue;
+                }
+
+                Vector3 worldPos = cart.transform.TransformPoint(localPos);
+                Quaternion worldRot = cart.transform.rotation * localRot;
+
+                var rb = inst.GetComponent<Rigidbody>();
+                if (rb != null)
+                {
+                    rb.position = worldPos;
+                    rb.rotation = worldRot;
+                    ZeroVelocity(rb);
+                }
+
+                inst.transform.position = worldPos;
+                inst.transform.rotation = worldRot;
+            }
         }
 
         private static PhysGrabObject? FindNearestUnused(
@@ -497,6 +623,73 @@ namespace REPO_Instant_Save.Save
             catch (Exception ex)
             {
                 Plugin.Log.LogWarning($"Restore: could not set value on '{vo.name}': {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Restore every Hauler's (ItemValuableBox) stored $ total, matched by name + nearest
+        /// position. Separate pass because a Hauler is not a PhysGrabObject, so the grabbable
+        /// restore never touches it.
+        /// </summary>
+        public static void RestoreHaulers(WorldSnapshot snap)
+        {
+            if (snap.haulers == null || snap.haulers.Count == 0)
+            {
+                return;
+            }
+
+            var live = UnityEngine.Object.FindObjectsOfType<ItemValuableBox>().ToList();
+            var used = new HashSet<ItemValuableBox>();
+            int n = 0;
+
+            foreach (var dto in snap.haulers)
+            {
+                Vector3 target = dto.pos.ToVector3();
+                ItemValuableBox? best = null;
+                float bestDist = float.MaxValue;
+
+                foreach (var box in live)
+                {
+                    if (box == null || used.Contains(box) || Clean(box.name) != dto.name)
+                    {
+                        continue;
+                    }
+
+                    float d = (box.transform.position - target).sqrMagnitude;
+                    if (d < bestDist)
+                    {
+                        bestDist = d;
+                        best = box;
+                    }
+                }
+
+                if (best != null)
+                {
+                    RestoreValuableBox(best, dto.value);
+                    used.Add(best);
+                    n++;
+                }
+            }
+
+            Plugin.Log.LogInfo($"Restore: set stored value on {n}/{snap.haulers.Count} Hauler(s) (live: {live.Count}).");
+        }
+
+        /// <summary>
+        /// Restore a Hauler's (ItemValuableBox) stored $ total. UpdateValue is host-authoritative
+        /// and RPCs the new value + display to clients. The absorbed valuables' meshes aren't
+        /// serializable, so the extract "spit-out" visual won't replay, but the value — and the
+        /// extraction payout (extractionValue = currentValue) — are preserved.
+        /// </summary>
+        private static void RestoreValuableBox(ItemValuableBox box, float value)
+        {
+            try
+            {
+                box.UpdateValue(value);
+                Plugin.Log.LogInfo($"Restore: set Hauler '{Clean(box.name)}' stored value to {value:0}.");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"Restore: could not set Hauler value on '{box.name}': {ex.Message}");
             }
         }
 
