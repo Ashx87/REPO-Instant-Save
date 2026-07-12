@@ -38,5 +38,18 @@ namespace REPO_Instant_Save.Save
         }
 
         public static bool Exists(string saveName) => File.Exists(PathFor(saveName));
+
+        /// <summary>
+        /// Removes the snapshot for a save folder. Used to retire a snapshot once the native
+        /// save has progressed past it, so it can never force the run back to an old level.
+        /// </summary>
+        public static void Delete(string saveName)
+        {
+            string path = PathFor(saveName);
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
     }
 }

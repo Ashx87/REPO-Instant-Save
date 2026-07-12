@@ -17,6 +17,7 @@ namespace REPO_Instant_Save.Save
                     ? RunManager.instance.levelCurrent.name
                     : "?",
                 takenUtcTicks = DateTime.UtcNow.Ticks,
+                runLevel = StatsManager.instance != null ? StatsManager.instance.GetRunStatLevel() : (int?)null,
             };
 
             CaptureLevelObjects(snap);

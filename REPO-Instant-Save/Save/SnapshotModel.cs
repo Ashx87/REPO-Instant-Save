@@ -14,6 +14,15 @@ namespace REPO_Instant_Save.Save
         public string levelName { get; set; } = "";
         public long takenUtcTicks { get; set; }
 
+        /// <summary>
+        /// Native run progression at capture time (<c>StatsManager.GetRunStatLevel()</c> =
+        /// levels completed). Used on cross-session load to detect that the native save has
+        /// progressed past this snapshot, so a stale snapshot doesn't drag the run back.
+        /// Nullable so pre-existing snapshots (which lack it) deserialize to null and skip
+        /// the progression check.
+        /// </summary>
+        public int? runLevel { get; set; }
+
         /// <summary>Every child under LevelGenerator.LevelParent (modules, connect/block objects).</summary>
         public List<SceneObjectDto> level { get; set; } = new();
         public List<ValuableDto> valuables { get; set; } = new();
