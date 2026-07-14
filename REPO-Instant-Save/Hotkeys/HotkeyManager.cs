@@ -1,4 +1,5 @@
 using REPO_Instant_Save.Save;
+using REPO_Instant_Save.Util;
 using UnityEngine;
 
 namespace REPO_Instant_Save.Hotkeys
@@ -13,19 +14,18 @@ namespace REPO_Instant_Save.Hotkeys
         private void Update()
         {
             var cfg = Plugin.Instance?.ModConfig;
-            if (cfg == null)
+            if (cfg == null || !cfg.EnableHotkeys.Value)
             {
                 return;
             }
 
+            // Only F7 (save) is a hotkey. Restore is never user-triggered — the mod runs it
+            // itself via the cross-session patches (WorldRestore.CrossSessionRestore) when a save
+            // with a snapshot is loaded.
             if (UnityEngine.Input.GetKeyDown(cfg.FullSaveKey.Value))
             {
-                InstantSaveService.SaveNow();
-            }
-
-            if (UnityEngine.Input.GetKeyDown(cfg.QuickLoadKey.Value))
-            {
-                RestoreService.RestoreNow();
+                bool ok = InstantSaveService.SaveNow();
+                HudNotify.Toast(ok ? "Instant Save complete" : "Instant Save failed", ok);
             }
         }
     }
