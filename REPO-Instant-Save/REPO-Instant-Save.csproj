@@ -5,7 +5,7 @@
     <AssemblyName>REPO-Instant-Save</AssemblyName>
     <RootNamespace>REPO_Instant_Save</RootNamespace>
     <Product>REPO-Instant-Save</Product>
-    <Version>0.1.0</Version>
+    <Version>1.0.0</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
